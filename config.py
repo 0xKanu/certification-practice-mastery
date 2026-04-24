@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Configure logging
 logging.basicConfig(
@@ -18,10 +18,15 @@ logging.basicConfig(
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
+api_key = os.getenv("OPENROUTER_API_KEY")
+base_url = "https://openrouter.ai/api/v1"
+if api_key and api_key.startswith("nvapi-"):
+    base_url = "https://integrate.api.nvidia.com/v1/"
+
 # OpenRouter uses the OpenAI SDK — just point base_url at their API
 client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
+    base_url=base_url,
+    api_key=api_key,
 )
 
 # Default model — override in .env to experiment
@@ -41,10 +46,6 @@ def call_llm(system_prompt: str, user_message: str, temperature: float = 0) -> s
         ],
         temperature=temperature,
         max_tokens=3000,
-        extra_headers={
-            "HTTP-Referer": "https://github.com/0xKanu/certification-practice-mastery",
-            "X-Title": "Certification Practice Mastery",
-        },
     )
     return response.choices[0].message.content
 

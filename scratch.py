@@ -1,30 +1,22 @@
-import json
-from ddgs import DDGS
+import os
 import requests
+from dotenv import load_dotenv
 
-def search_cert(cert_name):
-    query = f"{cert_name} official exam guide syllabus domains"
-    print(f"Searching: {query}")
-    
-    results = DDGS().text(query, max_results=3)
-    
-    context = ""
-    for r in results:
-        context += f"URL: {r['href']}\nTitle: {r['title']}\nSnippet: {r['body']}\n\n"
-        
-        # Try fetching full text via Jina AI
-        print(f"Fetching full text for {r['href']} via Jina...")
-        try:
-            jina_url = f"https://r.jina.ai/{r['href']}"
-            resp = requests.get(jina_url, timeout=10)
-            if resp.status_code == 200:
-                text = resp.text
-                context += f"FULL WEBSITE CONTENT:\n{text[:2500]}\n\n"
-            else:
-                print(f"Jina failed with {resp.status_code}")
-        except Exception as e:
-            print(f"Failed to fetch {r['href']}: {e}")
-            
-    print(context)
+load_dotenv(override=True)
+api_key = os.getenv("OPENROUTER_API_KEY")
 
-search_cert("Google Associate Data Practitioner")
+try:
+    resp = requests.get(
+        "https://integrate.api.nvidia.com/v1/models",
+        headers={"Authorization": f"Bearer {api_key}"}
+    )
+    if resp.status_code == 200:
+        data = resp.json()
+        models = [m["id"] for m in data.get("data", [])]
+        for m in sorted(models):
+            if "llama" in m.lower() or "nemotron" in m.lower() or "instruct" in m.lower() or "mixtral" in m.lower():
+                print(m)
+    else:
+        print(f"Failed: {resp.status_code} {resp.text}")
+except Exception as e:
+    print(f"Error: {e}")
