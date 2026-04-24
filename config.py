@@ -33,21 +33,37 @@ client = OpenAI(
 MODEL = os.getenv("MODEL", "meta-llama/llama-3.3-70b-instruct")
 
 
+import time
+from openai import RateLimitError
+
 def call_llm(system_prompt: str, user_message: str, temperature: float = 0) -> str:
     """Single LLM call. Every agent uses this.
 
     Swap models by changing MODEL in .env — no code changes needed.
     """
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=temperature,
-        max_tokens=3000,
-    )
-    return response.choices[0].message.content
+    max_retries = 3
+    base_wait = 2
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=temperature,
+                max_tokens=3000,
+            )
+            return response.choices[0].message.content
+        except RateLimitError as e:
+            wait_time = base_wait * (2 ** attempt)  # 2s, 4s, 8s
+            logger = logging.getLogger("LLM")
+            if attempt == max_retries - 1:
+                logger.error(f"Rate limit exhausted after {max_retries} attempts.")
+                raise
+            logger.warning(f"API Rate limit (429) hit. Waiting {wait_time}s before retry...")
+            time.sleep(wait_time)
 
 
 T = TypeVar("T", bound=BaseModel)
