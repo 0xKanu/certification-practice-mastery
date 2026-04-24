@@ -1,9 +1,10 @@
 import os
 import json
+import time
 import logging
 from typing import TypeVar, Type
 from pydantic import BaseModel
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -18,32 +19,40 @@ logging.basicConfig(
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
-api_key = os.getenv("OPENROUTER_API_KEY")
-base_url = "https://openrouter.ai/api/v1"
-if api_key and api_key.startswith("nvapi-"):
-    base_url = "https://integrate.api.nvidia.com/v1/"
+_logger = get_logger("Config")
 
-# OpenRouter uses the OpenAI SDK — just point base_url at their API
+# ── Provider Routing ─────────────────────────────────────
+# Switch between providers by setting PROVIDER in .env
+# Supported: "openrouter", "nvidia"
+PROVIDER = os.getenv("PROVIDER", "openrouter").lower().strip()
+
+if PROVIDER == "nvidia":
+    api_key = os.getenv("NVIDIA_API_KEY")
+    base_url = "https://integrate.api.nvidia.com/v1"
+    MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
+    _logger.info(f"Provider: NVIDIA NIM  |  Model: {MODEL}")
+else:
+    # Default: OpenRouter (generous free tier, wide model selection)
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    base_url = "https://openrouter.ai/api/v1"
+    MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
+    _logger.info(f"Provider: OpenRouter  |  Model: {MODEL}")
+
 client = OpenAI(
     base_url=base_url,
     api_key=api_key,
 )
 
-# Default model — override in .env to experiment
-MODEL = os.getenv("MODEL", "meta-llama/llama-3.3-70b-instruct")
-
-
-import time
-from openai import RateLimitError
 
 def call_llm(system_prompt: str, user_message: str, temperature: float = 0) -> str:
     """Single LLM call. Every agent uses this.
 
-    Swap models by changing MODEL in .env — no code changes needed.
+    Swap providers/models by changing PROVIDER + keys in .env — no code changes needed.
+    Includes exponential backoff for rate-limited free tiers.
     """
     max_retries = 5
     base_wait = 4
-    
+
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
@@ -58,11 +67,10 @@ def call_llm(system_prompt: str, user_message: str, temperature: float = 0) -> s
             return response.choices[0].message.content
         except RateLimitError as e:
             wait_time = base_wait * (2 ** attempt)  # 4s, 8s, 16s, 32s, 64s
-            logger = logging.getLogger("LLM")
             if attempt == max_retries - 1:
-                logger.error(f"Rate limit exhausted after {max_retries} attempts. Error: {e.message if hasattr(e, 'message') else str(e)}")
+                _logger.error(f"Rate limit exhausted after {max_retries} attempts. Error: {e.message if hasattr(e, 'message') else str(e)}")
                 raise
-            logger.warning(f"API Rate limit (429) hit. Waiting {wait_time}s before retry {attempt+1}/{max_retries}...")
+            _logger.warning(f"Rate limit (429). Waiting {wait_time}s before retry {attempt+1}/{max_retries}...")
             time.sleep(wait_time)
 
 
@@ -73,7 +81,7 @@ def call_llm_json(system_prompt: str, user_message: str, schema: Type[T], temper
     Handles markdown code block stripping automatically.
     """
     raw = call_llm(system_prompt, user_message, temperature)
-    
+
     clean = raw.strip()
     if clean.startswith("```"):
         # Split by first newline to remove the ```json part
@@ -83,6 +91,6 @@ def call_llm_json(system_prompt: str, user_message: str, schema: Type[T], temper
     if clean.endswith("```"):
         clean = clean.rsplit("```", 1)[0]
     clean = clean.strip()
-    
+
     parsed = json.loads(clean)
     return schema(**parsed)
