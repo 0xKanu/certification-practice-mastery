@@ -92,16 +92,20 @@ with left:
             with st.spinner("Mapping exam syllabus..."):
                 try:
                     syllabus = run_syllabus_mapper(cert)
-                    st.session_state.syllabus = syllabus
-                    st.session_state.mastery = MasteryState()
+                    
+                    if not syllabus.is_valid:
+                        st.error(syllabus.error_message or "Invalid certification. Please try again.")
+                    else:
+                        st.session_state.syllabus = syllabus
+                        st.session_state.mastery = MasteryState()
 
-                    # Initialise domain scores for all domains
-                    from schemas import DomainScore
-                    for d in syllabus.domains:
-                        st.session_state.mastery.domain_scores[d.domain_name] = DomainScore()
+                        # Initialise domain scores for all domains
+                        from schemas import DomainScore
+                        for d in syllabus.domains:
+                            st.session_state.mastery.domain_scores[d.domain_name] = DomainScore()
 
-                    st.session_state.stage = AppStage.SYLLABUS_REVIEW
-                    st.rerun()
+                        st.session_state.stage = AppStage.SYLLABUS_REVIEW
+                        st.rerun()
                 except (json.JSONDecodeError, ValidationError) as e:
                     st.error(f"Failed to map syllabus due to an AI response error. Please try again. ({e})")
                 except Exception as e:
@@ -124,9 +128,17 @@ with left:
                     st.markdown(f"- {topic}")
                     
         st.divider()
-        if st.button("Looks good, let's start!", type="primary"):
+        col1, col2 = st.columns([1, 1])
+        
+        if col1.button("✅ Looks good, let's start!", type="primary"):
             logger.info("User accepted syllabus, starting practice.")
             st.session_state.stage = AppStage.GENERATING
+            st.rerun()
+            
+        if col2.button("❌ No, wrong cert (Go Back)"):
+            logger.info("User rejected syllabus, returning to setup.")
+            st.session_state.stage = AppStage.SETUP
+            st.session_state.syllabus = None
             st.rerun()
 
     # ── GENERATING QUESTION ───────────────────────────────────

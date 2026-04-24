@@ -34,8 +34,10 @@ class CertificationMeta(BaseModel):
 
 
 class SyllabusOutput(BaseModel):
-    certification: CertificationMeta
-    domains: list[Domain]
+    is_valid: bool = True
+    error_message: str | None = None
+    certification: CertificationMeta | None = None
+    domains: list[Domain] | None = Field(default_factory=list)
     notes: str | None = None
     confidence_overall: Confidence
 
