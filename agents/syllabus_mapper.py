@@ -18,10 +18,11 @@ def _fetch_web_context(certification_name: str) -> str:
     2. Prefer official vendor URLs (cloud.google.com, aws.amazon.com, etc.)
     3. Fetch full page text via Jina AI Reader API
     4. Strip boilerplate from scraped content before truncating
+    5. Fallback: directly fetch study4exam if search misses official sources
     """
     queries = [
         f"{certification_name} official exam guide syllabus domains",
-        f"{certification_name} certification exam guide sections weightings site:cloud.google.com OR site:aws.amazon.com OR site:learn.microsoft.com",
+        f"{certification_name} exam syllabus sections weightings study4exam",
     ]
     
     all_results = []
@@ -62,6 +63,7 @@ def _fetch_web_context(certification_name: str) -> str:
     BLACKLISTED_DOMAINS = [
         "dumpsmaterials", "pass4leader", "braindump", "actualtests",
         "testking", "certificationst", "dumpsbase", "pass4sure",
+        "testoutce", "certificationstime",
     ]
     
     # Filter out blacklisted URLs entirely
@@ -85,7 +87,47 @@ def _fetch_web_context(certification_name: str) -> str:
     
     sorted_results = sorted(filtered_results, key=_url_priority)
     
-    # Try to fetch full text from the best URL (up to 2 attempts)
+    # Check if any top result is from an official or good source
+    has_good_source = any(
+        any(d in r['href'].lower() for d in OFFICIAL_DOMAINS + GOOD_SYLLABUS_SITES)
+        for r in sorted_results[:2]
+    )
+    
+    # Fallback: if no official/good source was found in search results,
+    # try to directly construct a study4exam URL from the cert name
+    if not has_good_source:
+        # Build a list of slug candidates: the cert name + any exam codes found in snippets
+        import re
+        slugs = [certification_name.lower().replace(" ", "-")]
+        # Extract exam codes like "PL-300", "SAA-C03", "AZ-900" from snippet text
+        all_snippet_text = " ".join(r.get("body", "") + " " + r.get("title", "") for r in unique_results)
+        exam_codes = re.findall(r'\b([A-Za-z]{1,4}[-_]\d{2,4})\b', all_snippet_text)
+        for code in exam_codes:
+            slugs.append(code.lower())
+        
+        # De-duplicate while preserving order
+        seen_slugs = set()
+        unique_slugs = []
+        for s in slugs:
+            if s not in seen_slugs:
+                seen_slugs.add(s)
+                unique_slugs.append(s)
+        
+        for slug in unique_slugs:
+            for vendor in ["google", "microsoft", "aws", "cisco", "comptia", ""]:
+                fallback_url = f"https://www.study4exam.com/{vendor}/syllabus/{slug}" if vendor else f"https://www.study4exam.com/syllabus/{slug}"
+                logger.info(f"Fallback: trying direct fetch from {fallback_url}")
+                try:
+                    jina_url = f"https://r.jina.ai/{fallback_url}"
+                    resp = requests.get(jina_url, timeout=15)
+                    if resp.status_code == 200 and "404" not in resp.text[:500] and "not found" not in resp.text[:500].lower():
+                        page_text = _clean_page_text(resp.text)
+                        context += f"\nFULL WEBSITE CONTENT (from {fallback_url}):\n{page_text[:8000]}"
+                        return context
+                except Exception as e:
+                    logger.warning(f"Fallback fetch error for {fallback_url}: {e}")
+    
+    # Try to fetch full text from the best search result URL (up to 2 attempts)
     for r in sorted_results[:2]:
         target_url = r['href']
         logger.info(f"Fetching full text via Jina AI for: {target_url}")
@@ -95,7 +137,7 @@ def _fetch_web_context(certification_name: str) -> str:
             if resp.status_code == 200:
                 page_text = _clean_page_text(resp.text)
                 # Use 8K chars — enough for full exam guides but not wasteful
-                context += f"\nFULL WEBSITE CONTENT (from {target_url}):\n{page_text[:8000]}"
+                context += f"\nFULL WEBSITE CONTENT (from {target_url}):\n{page_text[:10000]}"
                 break
             else:
                 logger.warning(f"Jina AI fetch failed ({resp.status_code}) for {target_url}")
