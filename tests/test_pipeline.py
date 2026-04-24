@@ -157,13 +157,21 @@ def _run_pipeline(orch: Orchestrator, db: Database):
 
     # Add a few more results so the strategy has something to analyse
     for i in range(3):
-        q = orch.handle_generate_question(syllabus, mastery, question_number=i + 3)
-        result = orch.handle_answer_submitted(
-            question=q, student_answer=q.correct_answer,
-            syllabus=syllabus, mastery=mastery,
-            question_number=i + 3,
-        )
-        mastery = result["mastery"]
+        # Retry on transient LLM JSON parse errors
+        for attempt in range(3):
+            try:
+                q = orch.handle_generate_question(syllabus, mastery, question_number=i + 3)
+                result = orch.handle_answer_submitted(
+                    question=q, student_answer=q.correct_answer,
+                    syllabus=syllabus, mastery=mastery,
+                    question_number=i + 3,
+                )
+                mastery = result["mastery"]
+                break
+            except json.JSONDecodeError:
+                if attempt == 2:
+                    raise
+                print(f"  (Retrying question {i+3} due to JSON parse error...)")
 
     strategy = orch.handle_strategy_requested(mastery, syllabus)
     assert len(strategy) > 100, "FAIL: strategy too short"
