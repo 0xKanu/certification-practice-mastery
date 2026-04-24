@@ -96,8 +96,26 @@ class MasteryState(BaseModel):
     current_streak: int = 0
     weakest_domain: str | None = None
     recent_questions: list[str] = Field(default_factory=list)
+    session_id: str | None = None
+    srs_review_count: int = 0
+    next_is_review: bool = False
 
 
 class QAReviewOutput(BaseModel):
     approved: bool
     critique: str | None = None
+
+
+class SRSCard(BaseModel):
+    """Spaced repetition card for a single concept."""
+    card_id: str
+    session_id: str
+    concept: str
+    domain: str
+    subtopic: str
+    ease_factor: float = 2.5
+    interval_days: int = 1
+    repetitions: int = 0
+    next_review: str | None = None
+    last_review: str | None = None
+    quality_history: list[int] = Field(default_factory=list)

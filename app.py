@@ -2,17 +2,24 @@ import streamlit as st
 import json
 from pydantic import ValidationError
 from schemas import MasteryState, SyllabusOutput, AppStage
-from agents.syllabus_mapper import run_syllabus_mapper
-from agents.question_generator import run_question_generator
-from agents.grader import run_grader
-from agents.mastery_scorer import run_mastery_scorer
-from agents.study_strategy import run_study_strategy
+from database import Database
+from orchestrator import Orchestrator
 from config import get_logger
 
 logger = get_logger("App")
 
-
 st.set_page_config(page_title="Cert Practice Mastery", layout="wide")
+
+# ── Persistent singletons ─────────────────────────────────────
+@st.cache_resource
+def get_db():
+    return Database()
+
+@st.cache_resource
+def get_orchestrator():
+    return Orchestrator(get_db())
+
+orch = get_orchestrator()
 
 # ── Session state ─────────────────────────────────────────────
 if "stage" not in st.session_state:
@@ -23,6 +30,7 @@ if "stage" not in st.session_state:
     st.session_state.question_number = 0
     st.session_state.last_grading = None
     st.session_state.show_explanation = False
+    st.session_state.cert_name = ""
 
 left, right = st.columns([2, 1])
 
@@ -46,6 +54,12 @@ with right:
         c2.metric("Correct", correct)
         c3.metric("Accuracy", f"{accuracy}%")
 
+        # Streak indicator
+        if m.current_streak >= 3:
+            st.success(f"🔥 {m.current_streak} streak!")
+        elif m.current_streak > 0:
+            st.caption(f"Streak: {m.current_streak}")
+
         # Domain mastery bars
         st.divider()
         st.markdown("**Domain mastery**")
@@ -61,12 +75,28 @@ with right:
             ws = m.domain_scores[m.weakest_domain]
             st.caption(f"Focus area: **{m.weakest_domain}** ({ws.mastery_percent}%)")
 
+        # ── SRS Stats ─────────────────────────────────────────
+        if m.session_id:
+            srs_stats = orch.get_srs_stats(m.session_id)
+            if srs_stats["total_cards"] > 0:
+                st.divider()
+                st.markdown("**Spaced Repetition**")
+                s1, s2 = st.columns(2)
+                s1.metric("Concepts", srs_stats["total_cards"])
+                s2.metric("Due for review", srs_stats["due_cards"])
+                st.progress(
+                    srs_stats["retention_rate"] / 100,
+                    text=f"Retention: {srs_stats['retention_rate']}%"
+                )
+                if m.srs_review_count > 0:
+                    st.caption(f"Reviews this session: {m.srs_review_count}")
+
         # Strategy button
         st.divider()
         if st.button("Get study strategy"):
             logger.info("User requested a study strategy.")
             with st.spinner("Analysing your session..."):
-                strategy = run_study_strategy(m, st.session_state.syllabus)
+                strategy = orch.handle_strategy_requested(m, st.session_state.syllabus)
             st.markdown(strategy)
 
 
@@ -82,6 +112,37 @@ with left:
             "and tracks your pass probability in real time."
         )
 
+        # ── Session Picker (resume past sessions) ─────────────
+        sessions = orch.list_sessions()
+        if sessions:
+            st.markdown("#### Resume a session")
+            for s in sessions[:5]:  # Show last 5
+                col_info, col_resume, col_delete = st.columns([4, 1, 1])
+                with col_info:
+                    st.markdown(
+                        f"**{s['cert_name']}** — "
+                        f"{s['question_count']} Qs, "
+                        f"{s['pass_probability']}% pass"
+                    )
+                with col_resume:
+                    if st.button("Resume", key=f"resume_{s['session_id']}"):
+                        logger.info(f"User resuming session {s['session_id']}")
+                        result = orch.handle_session_resume(s["session_id"])
+                        if result:
+                            st.session_state.syllabus = result["syllabus"]
+                            st.session_state.mastery = result["mastery"]
+                            st.session_state.cert_name = result["cert_name"]
+                            st.session_state.question_number = result["mastery"].total_questions
+                            st.session_state.stage = AppStage.GENERATING
+                            st.rerun()
+                with col_delete:
+                    if st.button("🗑️", key=f"del_{s['session_id']}"):
+                        orch.delete_session(s["session_id"])
+                        st.rerun()
+
+            st.divider()
+            st.markdown("#### Or start a new session")
+
         cert = st.text_input(
             "Certification",
             placeholder="e.g. Google Professional Data Engineer",
@@ -91,19 +152,17 @@ with left:
             logger.info(f"User started session for cert: '{cert}'")
             with st.spinner("Mapping exam syllabus..."):
                 try:
-                    syllabus = run_syllabus_mapper(cert)
-                    
+                    result = orch.handle_cert_submitted(cert)
+                    syllabus = result["syllabus"]
+
+                    if result["cached"]:
+                        st.toast("Loaded from cache — instant!", icon="⚡")
+
                     if not syllabus.is_valid:
                         st.error(syllabus.error_message or "Invalid certification. Please try again.")
                     else:
                         st.session_state.syllabus = syllabus
-                        st.session_state.mastery = MasteryState()
-
-                        # Initialise domain scores for all domains
-                        from schemas import DomainScore
-                        for d in syllabus.domains:
-                            st.session_state.mastery.domain_scores[d.domain_name] = DomainScore()
-
+                        st.session_state.cert_name = cert
                         st.session_state.stage = AppStage.SYLLABUS_REVIEW
                         st.rerun()
                 except (json.JSONDecodeError, ValidationError) as e:
@@ -115,26 +174,34 @@ with left:
     elif st.session_state.stage == AppStage.SYLLABUS_REVIEW:
         st.title("Exam Syllabus")
         s = st.session_state.syllabus
-        
+
         st.markdown(f"### {s.certification.official_name}")
         st.markdown(f"**Provider:** {s.certification.provider}")
         if s.notes:
             st.info(s.notes)
-            
+
         for d in s.domains:
             with st.expander(f"{d.domain_name} ({d.weight_percent}%)", expanded=True):
                 st.markdown("**Key Topics:**")
                 for topic in d.key_topics:
                     st.markdown(f"- {topic}")
-                    
+
         st.divider()
         col1, col2 = st.columns([1, 1])
-        
+
         if col1.button("✅ Looks good, let's start!", type="primary"):
             logger.info("User accepted syllabus, starting practice.")
+
+            # Create session via orchestrator
+            result = orch.handle_session_start(
+                st.session_state.cert_name,
+                st.session_state.syllabus,
+            )
+            st.session_state.mastery = result["mastery"]
+
             st.session_state.stage = AppStage.GENERATING
             st.rerun()
-            
+
         if col2.button("❌ No, wrong cert (Go Back)"):
             logger.info("User rejected syllabus, returning to setup.")
             st.session_state.stage = AppStage.SETUP
@@ -146,18 +213,18 @@ with left:
         with st.spinner("Generating question..."):
             try:
                 st.session_state.question_number += 1
-                q = run_question_generator(
+                q = orch.handle_generate_question(
                     st.session_state.syllabus,
                     st.session_state.mastery,
                     st.session_state.question_number,
                 )
                 st.session_state.current_question = q
-                
+
                 # Track recent questions to prevent repeats (keep last 15)
                 st.session_state.mastery.recent_questions.append(q.question_text)
                 if len(st.session_state.mastery.recent_questions) > 15:
                     st.session_state.mastery.recent_questions.pop(0)
-                    
+
                 st.session_state.last_grading = None
                 st.session_state.show_explanation = False
                 st.session_state.stage = AppStage.PRACTISING
@@ -180,13 +247,28 @@ with left:
         # Show previous grading result if exists
         g = st.session_state.last_grading
         if g:
+            # Try to collect error classification from background
+            g = orch.collect_error_classification(g)
+            st.session_state.last_grading = g
+
             if g.is_correct:
-                st.success(f"Correct! {g.explanation}")
+                st.success(f"✅ Correct! {g.explanation}")
             else:
                 st.error(
-                    f"Incorrect — the answer was {g.correct_answer}. "
+                    f"❌ Incorrect — the answer was **{g.correct_answer}**. "
                     f"{g.explanation}"
                 )
+                if g.error_category:
+                    category_labels = {
+                        "conceptual_misunderstanding": "🧠 Conceptual gap",
+                        "incomplete_knowledge": "📚 Knowledge gap",
+                        "misread_question": "👀 Misread question",
+                        "careless_error": "⚡ Careless error",
+                        "random_guess": "🎲 Random guess",
+                    }
+                    cat_value = g.error_category.value if hasattr(g.error_category, 'value') else g.error_category
+                    label = category_labels.get(cat_value, cat_value)
+                    st.caption(f"Error type: {label}")
                 if g.concept_gap:
                     st.caption(f"Gap identified: {g.concept_gap}")
 
@@ -213,20 +295,23 @@ with left:
 
         if col_submit.button("Submit answer", type="primary"):
             logger.info(f"User submitted answer: '{choice}'")
-            with st.spinner("Grading..."):
-                try:
-                    grading = run_grader(q, choice)
-                    mastery = run_mastery_scorer(
-                        st.session_state.mastery, grading, st.session_state.syllabus
-                    )
-                    st.session_state.mastery = mastery
-                    st.session_state.last_grading = grading
-                    st.session_state.stage = AppStage.GENERATING
-                    st.rerun()
-                except (json.JSONDecodeError, ValidationError) as e:
-                    st.error(f"Grading failed due to an AI response error. ({e})")
-                except Exception as e:
-                    st.error(f"Grading failed: {e}")
+            # Use orchestrator for parallel grading + pre-generation
+            try:
+                result = orch.handle_answer_submitted(
+                    question=q,
+                    student_answer=choice,
+                    syllabus=st.session_state.syllabus,
+                    mastery=st.session_state.mastery,
+                    question_number=st.session_state.question_number,
+                )
+                st.session_state.mastery = result["mastery"]
+                st.session_state.last_grading = result["grading"]
+                st.session_state.stage = AppStage.GENERATING
+                st.rerun()
+            except (json.JSONDecodeError, ValidationError) as e:
+                st.error(f"Grading failed due to an AI response error. ({e})")
+            except Exception as e:
+                st.error(f"Grading failed: {e}")
 
         if col_skip.button("Skip"):
             logger.info("User skipped the question.")

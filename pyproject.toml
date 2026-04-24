@@ -1,7 +1,7 @@
 [project]
 name = "certification-practice-mastery"
-version = "0.1.0"
-description = "Multi-agent AI system for adaptive certifiaction exam preparation"
+version = "0.2.0"
+description = "Multi-agent AI system for adaptive certification exam preparation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,3 +10,6 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "streamlit>=1.56.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
