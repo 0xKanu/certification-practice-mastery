@@ -41,8 +41,8 @@ def call_llm(system_prompt: str, user_message: str, temperature: float = 0) -> s
 
     Swap models by changing MODEL in .env — no code changes needed.
     """
-    max_retries = 3
-    base_wait = 2
+    max_retries = 5
+    base_wait = 4
     
     for attempt in range(max_retries):
         try:
@@ -57,12 +57,12 @@ def call_llm(system_prompt: str, user_message: str, temperature: float = 0) -> s
             )
             return response.choices[0].message.content
         except RateLimitError as e:
-            wait_time = base_wait * (2 ** attempt)  # 2s, 4s, 8s
+            wait_time = base_wait * (2 ** attempt)  # 4s, 8s, 16s, 32s, 64s
             logger = logging.getLogger("LLM")
             if attempt == max_retries - 1:
-                logger.error(f"Rate limit exhausted after {max_retries} attempts.")
+                logger.error(f"Rate limit exhausted after {max_retries} attempts. Error: {e.message if hasattr(e, 'message') else str(e)}")
                 raise
-            logger.warning(f"API Rate limit (429) hit. Waiting {wait_time}s before retry...")
+            logger.warning(f"API Rate limit (429) hit. Waiting {wait_time}s before retry {attempt+1}/{max_retries}...")
             time.sleep(wait_time)
 
 
