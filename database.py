@@ -173,6 +173,41 @@ class Database:
         logger.info(f"Syllabus cache MISS for '{cert_name}'")
         return None
 
+    def list_cached_syllabi(self) -> list[dict]:
+        """List all cached syllabi with their keys, domain summaries, and timestamps."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT cert_key, syllabus_json, cached_at FROM syllabus_cache ORDER BY cached_at DESC"
+            ).fetchall()
+        results = []
+        for row in rows:
+            data = json.loads(row["syllabus_json"])
+            domains_summary = []
+            if data.get("domains"):
+                for d in data["domains"]:
+                    domains_summary.append(f"{d['domain_name']}: {d['weight_percent']}%")
+            results.append({
+                "cert_key": row["cert_key"],
+                "official_name": data.get("certification", {}).get("official_name", row["cert_key"]),
+                "domains": domains_summary,
+                "cached_at": row["cached_at"],
+            })
+        return results
+
+    def delete_cached_syllabus(self, cert_key: str):
+        """Delete a single cached syllabus by its key."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM syllabus_cache WHERE cert_key = ?", (cert_key,))
+        logger.info(f"Deleted cached syllabus: '{cert_key}'")
+
+    def clear_all_cached_syllabi(self):
+        """Delete ALL cached syllabi. Next session will re-fetch from the web."""
+        with self._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM syllabus_cache").fetchone()[0]
+            conn.execute("DELETE FROM syllabus_cache")
+        logger.info(f"Cleared all {count} cached syllabi")
+        return count
+
     # ── SRS Cards ─────────────────────────────────────────────
 
     def upsert_srs_card(

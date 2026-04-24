@@ -10,6 +10,33 @@ logger = get_logger("App")
 
 st.set_page_config(page_title="Cert Practice Mastery", layout="wide")
 
+# ── Sidebar: Syllabus Cache Manager ───────────────────────────
+with st.sidebar:
+    st.markdown("### ⚙️ Syllabus Cache")
+    st.caption("Manage cached exam syllabi. Delete entries that look wrong — the system will re-fetch from the web on your next session.")
+
+    _db = Database()
+    cached = _db.list_cached_syllabi()
+
+    if not cached:
+        st.info("No cached syllabi yet.")
+    else:
+        for entry in cached:
+            with st.expander(f"📄 {entry['official_name']}", expanded=False):
+                for d in entry["domains"]:
+                    st.markdown(f"- {d}")
+                st.caption(f"Cached: {entry['cached_at'][:10]}")
+                if st.button("🗑️ Delete this", key=f"del_cache_{entry['cert_key']}"):
+                    _db.delete_cached_syllabus(entry["cert_key"])
+                    st.toast(f"Deleted: {entry['official_name']}", icon="🗑️")
+                    st.rerun()
+
+        st.divider()
+        if st.button("🧹 Clear ALL cached syllabi", type="secondary"):
+            count = _db.clear_all_cached_syllabi()
+            st.toast(f"Cleared {count} cached syllabi!", icon="🧹")
+            st.rerun()
+
 # ── Persistent singletons ─────────────────────────────────────
 @st.cache_resource
 def get_db():
