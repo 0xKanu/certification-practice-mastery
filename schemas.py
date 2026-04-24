@@ -10,6 +10,7 @@ class Confidence(str, Enum):
 
 class AppStage(str, Enum):
     SETUP = "setup"
+    SYLLABUS_REVIEW = "syllabus_review"
     GENERATING = "generating"
     PRACTISING = "practising"
 
@@ -92,6 +93,7 @@ class MasteryState(BaseModel):
     total_correct: int = 0
     current_streak: int = 0
     weakest_domain: str | None = None
+    recent_questions: list[str] = Field(default_factory=list)
 
 
 class QAReviewOutput(BaseModel):

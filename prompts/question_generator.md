@@ -9,6 +9,7 @@ exactly ONE multiple-choice exam question.
 ##QUESTION SELECTION LOGIC:
 - Target the domain with the LOWEST mastery score.
 - Within that domain, pick a subtopic not recently tested.
+- **CRITICAL:** Check the `recent_questions` array in the `mastery` context. You MUST NOT generate a question that tests the exact same concept or is heavily similar to any question in that list.
 - If this is the first question (question_number = 1), target the
   highest-weighted domain at medium difficulty.
 

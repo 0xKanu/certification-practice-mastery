@@ -100,12 +100,34 @@ with left:
                     for d in syllabus.domains:
                         st.session_state.mastery.domain_scores[d.domain_name] = DomainScore()
 
-                    st.session_state.stage = AppStage.GENERATING
+                    st.session_state.stage = AppStage.SYLLABUS_REVIEW
                     st.rerun()
                 except (json.JSONDecodeError, ValidationError) as e:
                     st.error(f"Failed to map syllabus due to an AI response error. Please try again. ({e})")
                 except Exception as e:
                     st.error(f"Failed to map syllabus: {e}")
+
+    # ── SYLLABUS REVIEW ───────────────────────────────────────
+    elif st.session_state.stage == AppStage.SYLLABUS_REVIEW:
+        st.title("Exam Syllabus")
+        s = st.session_state.syllabus
+        
+        st.markdown(f"### {s.certification.official_name}")
+        st.markdown(f"**Provider:** {s.certification.provider}")
+        if s.notes:
+            st.info(s.notes)
+            
+        for d in s.domains:
+            with st.expander(f"{d.domain_name} ({d.weight_percent}%)", expanded=True):
+                st.markdown("**Key Topics:**")
+                for topic in d.key_topics:
+                    st.markdown(f"- {topic}")
+                    
+        st.divider()
+        if st.button("Looks good, let's start!", type="primary"):
+            logger.info("User accepted syllabus, starting practice.")
+            st.session_state.stage = AppStage.GENERATING
+            st.rerun()
 
     # ── GENERATING QUESTION ───────────────────────────────────
     elif st.session_state.stage == AppStage.GENERATING:
@@ -118,6 +140,12 @@ with left:
                     st.session_state.question_number,
                 )
                 st.session_state.current_question = q
+                
+                # Track recent questions to prevent repeats (keep last 15)
+                st.session_state.mastery.recent_questions.append(q.question_text)
+                if len(st.session_state.mastery.recent_questions) > 15:
+                    st.session_state.mastery.recent_questions.pop(0)
+                    
                 st.session_state.last_grading = None
                 st.session_state.show_explanation = False
                 st.session_state.stage = AppStage.PRACTISING
