@@ -10,6 +10,3 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "streamlit>=1.56.0",
 ]
-
-[project.scripts]
-cert-mastery = "app:main"

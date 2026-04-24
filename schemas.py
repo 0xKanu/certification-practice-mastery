@@ -92,3 +92,8 @@ class MasteryState(BaseModel):
     total_correct: int = 0
     current_streak: int = 0
     weakest_domain: str | None = None
+
+
+class QAReviewOutput(BaseModel):
+    approved: bool
+    critique: str | None = None

@@ -1,5 +1,7 @@
 from schemas import MasteryState, DomainScore, SyllabusOutput, GradingOutput
+from config import get_logger
 
+logger = get_logger("Agent.MasteryScorer")
 
 def run_mastery_scorer(
     current_state: MasteryState,
@@ -10,6 +12,7 @@ def run_mastery_scorer(
 
     This is pure arithmetic. No LLM call. Deterministic, fast, free.
     """
+    logger.info(f"Updating mastery state for domain '{grading.domain}'...")
     domain = grading.domain
 
     # Get or create domain score

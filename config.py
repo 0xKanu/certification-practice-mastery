@@ -1,11 +1,22 @@
 import os
 import json
+import logging
 from typing import TypeVar, Type
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
 
 # OpenRouter uses the OpenAI SDK — just point base_url at their API
 client = OpenAI(

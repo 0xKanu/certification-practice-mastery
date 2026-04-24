@@ -7,6 +7,9 @@ from agents.question_generator import run_question_generator
 from agents.grader import run_grader
 from agents.mastery_scorer import run_mastery_scorer
 from agents.study_strategy import run_study_strategy
+from config import get_logger
+
+logger = get_logger("App")
 
 
 st.set_page_config(page_title="Cert Practice Mastery", layout="wide")
@@ -61,6 +64,7 @@ with right:
         # Strategy button
         st.divider()
         if st.button("Get study strategy"):
+            logger.info("User requested a study strategy.")
             with st.spinner("Analysing your session..."):
                 strategy = run_study_strategy(m, st.session_state.syllabus)
             st.markdown(strategy)
@@ -84,6 +88,7 @@ with left:
         )
 
         if st.button("Start practising", type="primary", disabled=not cert):
+            logger.info(f"User started session for cert: '{cert}'")
             with st.spinner("Mapping exam syllabus..."):
                 try:
                     syllabus = run_syllabus_mapper(cert)
@@ -167,6 +172,7 @@ with left:
         col_submit, col_skip = st.columns([1, 1])
 
         if col_submit.button("Submit answer", type="primary"):
+            logger.info(f"User submitted answer: '{choice}'")
             with st.spinner("Grading..."):
                 try:
                     grading = run_grader(q, choice)
@@ -183,5 +189,6 @@ with left:
                     st.error(f"Grading failed: {e}")
 
         if col_skip.button("Skip"):
+            logger.info("User skipped the question.")
             st.session_state.stage = AppStage.GENERATING
             st.rerun()
