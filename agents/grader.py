@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from config import call_llm
+from config import call_llm_json
 from schemas import GradingOutput, QuestionOutput
 
 
@@ -17,18 +17,9 @@ def run_grader(
         "student_answer": student_answer.strip().upper(),
     }, indent=2)
 
-    raw = call_llm(
+    return call_llm_json(
         system_prompt=PROMPT,
         user_message=context,
+        schema=GradingOutput,
         temperature=0,
     )
-
-    clean = raw.strip()
-    if clean.startswith("```"):
-        clean = clean.split("\n", 1)[1]
-    if clean.endswith("```"):
-        clean = clean.rsplit("```", 1)[0]
-    clean = clean.strip()
-
-    parsed = json.loads(clean)
-    return GradingOutput(**parsed)

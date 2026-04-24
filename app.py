@@ -1,5 +1,7 @@
 import streamlit as st
-from schemas import MasteryState, SyllabusOutput
+import json
+from pydantic import ValidationError
+from schemas import MasteryState, SyllabusOutput, AppStage
 from agents.syllabus_mapper import run_syllabus_mapper
 from agents.question_generator import run_question_generator
 from agents.grader import run_grader
@@ -11,7 +13,7 @@ st.set_page_config(page_title="Cert Practice Mastery", layout="wide")
 
 # ── Session state ─────────────────────────────────────────────
 if "stage" not in st.session_state:
-    st.session_state.stage = "setup"
+    st.session_state.stage = AppStage.SETUP
     st.session_state.syllabus = None
     st.session_state.mastery = MasteryState()
     st.session_state.current_question = None
@@ -24,7 +26,7 @@ left, right = st.columns([2, 1])
 
 # ── Right panel: live dashboard ───────────────────────────────
 with right:
-    if st.session_state.stage == "practising":
+    if st.session_state.stage == AppStage.PRACTISING:
         m = st.session_state.mastery
 
         st.markdown(f"### {st.session_state.syllabus.certification.official_name}")
@@ -68,7 +70,7 @@ with right:
 with left:
 
     # ── SETUP ─────────────────────────────────────────────────
-    if st.session_state.stage == "setup":
+    if st.session_state.stage == AppStage.SETUP:
         st.title("Certification Practice Mastery")
         st.markdown(
             "Enter a certification name to start an adaptive practice session. "
@@ -93,13 +95,15 @@ with left:
                     for d in syllabus.domains:
                         st.session_state.mastery.domain_scores[d.domain_name] = DomainScore()
 
-                    st.session_state.stage = "generating"
+                    st.session_state.stage = AppStage.GENERATING
                     st.rerun()
+                except (json.JSONDecodeError, ValidationError) as e:
+                    st.error(f"Failed to map syllabus due to an AI response error. Please try again. ({e})")
                 except Exception as e:
                     st.error(f"Failed to map syllabus: {e}")
 
     # ── GENERATING QUESTION ───────────────────────────────────
-    elif st.session_state.stage == "generating":
+    elif st.session_state.stage == AppStage.GENERATING:
         with st.spinner("Generating question..."):
             try:
                 st.session_state.question_number += 1
@@ -111,18 +115,21 @@ with left:
                 st.session_state.current_question = q
                 st.session_state.last_grading = None
                 st.session_state.show_explanation = False
-                st.session_state.stage = "practising"
+                st.session_state.stage = AppStage.PRACTISING
                 st.rerun()
+            except (json.JSONDecodeError, ValidationError) as e:
+                st.error(f"Failed to generate question due to an AI response error. ({e})")
+                st.session_state.stage = AppStage.PRACTISING
             except Exception as e:
                 st.error(f"Failed to generate question: {e}")
-                st.session_state.stage = "practising"
+                st.session_state.stage = AppStage.PRACTISING
 
     # ── PRACTISING ────────────────────────────────────────────
-    elif st.session_state.stage == "practising":
+    elif st.session_state.stage == AppStage.PRACTISING:
         q = st.session_state.current_question
 
         if q is None:
-            st.session_state.stage = "generating"
+            st.session_state.stage = AppStage.GENERATING
             st.rerun()
 
         # Show previous grading result if exists
@@ -168,11 +175,13 @@ with left:
                     )
                     st.session_state.mastery = mastery
                     st.session_state.last_grading = grading
-                    st.session_state.stage = "generating"
+                    st.session_state.stage = AppStage.GENERATING
                     st.rerun()
+                except (json.JSONDecodeError, ValidationError) as e:
+                    st.error(f"Grading failed due to an AI response error. ({e})")
                 except Exception as e:
                     st.error(f"Grading failed: {e}")
 
         if col_skip.button("Skip"):
-            st.session_state.stage = "generating"
+            st.session_state.stage = AppStage.GENERATING
             st.rerun()

@@ -8,6 +8,12 @@ class Confidence(str, Enum):
     LOW = "low"
 
 
+class AppStage(str, Enum):
+    SETUP = "setup"
+    GENERATING = "generating"
+    PRACTISING = "practising"
+
+
 class Domain(BaseModel):
     domain_name: str
     weight_percent: int

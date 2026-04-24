@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from config import call_llm
+from config import call_llm_json
 from schemas import QuestionOutput, SyllabusOutput, MasteryState
 
 
@@ -19,18 +19,9 @@ def run_question_generator(
         "question_number": question_number,
     }, indent=2)
 
-    raw = call_llm(
+    return call_llm_json(
         system_prompt=PROMPT,
         user_message=context,
+        schema=QuestionOutput,
         temperature=0.7,
     )
-
-    clean = raw.strip()
-    if clean.startswith("```"):
-        clean = clean.split("\n", 1)[1]
-    if clean.endswith("```"):
-        clean = clean.rsplit("```", 1)[0]
-    clean = clean.strip()
-
-    parsed = json.loads(clean)
-    return QuestionOutput(**parsed)
