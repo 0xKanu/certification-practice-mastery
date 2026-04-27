@@ -55,6 +55,12 @@ def run_mastery_scorer(
     else:
         current_state.current_streak = 0
 
+    # Track difficulty (used for calibration)
+    if hasattr(grading, 'difficulty') and grading.difficulty:
+        current_state.recent_difficulties.append(grading.difficulty)
+        if len(current_state.recent_difficulties) > 10:
+            current_state.recent_difficulties.pop(0)
+
     # Ensure all syllabus domains exist in scores (even if not yet tested)
     for d in syllabus.domains:
         if d.domain_name not in current_state.domain_scores:

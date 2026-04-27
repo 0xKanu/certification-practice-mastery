@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from schemas import MasteryState, SyllabusOutput, AppStage
 from database import Database
 from orchestrator import Orchestrator
-from config import get_logger
+from config import get_logger, RECENT_QUESTIONS_LIMIT
 
 logger = get_logger("App")
 
@@ -247,9 +247,9 @@ with left:
                 )
                 st.session_state.current_question = q
 
-                # Track recent questions to prevent repeats (keep last 15)
+                # Track recent questions to prevent repeats (keep last RECENT_QUESTIONS_LIMIT)
                 st.session_state.mastery.recent_questions.append(q.question_text)
-                if len(st.session_state.mastery.recent_questions) > 15:
+                if len(st.session_state.mastery.recent_questions) > RECENT_QUESTIONS_LIMIT:
                     st.session_state.mastery.recent_questions.pop(0)
 
                 st.session_state.last_grading = None
@@ -312,7 +312,7 @@ with left:
                         st.session_state.question_number += 1
                         # Track recent questions
                         st.session_state.mastery.recent_questions.append(prefetched.question_text)
-                        if len(st.session_state.mastery.recent_questions) > 15:
+                        if len(st.session_state.mastery.recent_questions) > RECENT_QUESTIONS_LIMIT:
                             st.session_state.mastery.recent_questions.pop(0)
                         st.session_state.last_grading = None
                         st.session_state.show_explanation = False
@@ -359,7 +359,7 @@ with left:
                     st.session_state.current_question = prefetched
                     st.session_state.question_number += 1
                     st.session_state.mastery.recent_questions.append(prefetched.question_text)
-                    if len(st.session_state.mastery.recent_questions) > 15:
+                    if len(st.session_state.mastery.recent_questions) > RECENT_QUESTIONS_LIMIT:
                         st.session_state.mastery.recent_questions.pop(0)
                     st.session_state.last_grading = None
                     st.session_state.show_explanation = False
@@ -403,12 +403,14 @@ with left:
 
             if col_skip.button("Skip"):
                 logger.info("User skipped the question.")
+                # Clear prefetch queue to avoid returning skipped questions
+                orch.clear_prefetch_queue()
                 prefetched = orch.get_prefetched_question()
                 if prefetched:
                     st.session_state.current_question = prefetched
                     st.session_state.question_number += 1
                     st.session_state.mastery.recent_questions.append(prefetched.question_text)
-                    if len(st.session_state.mastery.recent_questions) > 15:
+                    if len(st.session_state.mastery.recent_questions) > RECENT_QUESTIONS_LIMIT:
                         st.session_state.mastery.recent_questions.pop(0)
                     st.session_state.last_grading = None
                     st.session_state.show_explanation = False

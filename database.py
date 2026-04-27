@@ -9,7 +9,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from config import get_logger
+from config import get_logger, QUESTION_CACHE_TTL_DAYS
 
 logger = get_logger("Database")
 
@@ -226,16 +226,29 @@ class Database:
         logger.info(f"Cached question: '{cache_key}'")
 
     def get_cached_question(self, cache_key: str) -> str | None:
-        """Retrieve cached question JSON, or None if not cached."""
+        """Retrieve cached question JSON, or None if not cached or expired."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT question_json FROM question_cache WHERE cache_key = ?", (cache_key,)
+                "SELECT question_json, cached_at FROM question_cache WHERE cache_key = ?",
+                (cache_key,)
             ).fetchone()
-        if row:
-            logger.info(f"Question cache HIT: '{cache_key}'")
-            return row["question_json"]
-        logger.info(f"Question cache MISS: '{cache_key}'")
-        return None
+
+        if not row:
+            logger.info(f"Question cache MISS: '{cache_key}'")
+            return None
+
+        # Check expiration
+        cached_at = datetime.fromisoformat(row["cached_at"])
+        age_days = (datetime.now(timezone.utc) - cached_at).days
+
+        if age_days > QUESTION_CACHE_TTL_DAYS:
+            logger.info(f"Question cache EXPIRED ({age_days} days): '{cache_key}'")
+            with self._connect() as conn:
+                conn.execute("DELETE FROM question_cache WHERE cache_key = ?", (cache_key,))
+            return None
+
+        logger.info(f"Question cache HIT: '{cache_key}'")
+        return row["question_json"]
 
     def list_cached_questions(self) -> list[dict]:
         """List all cached questions."""

@@ -15,7 +15,7 @@ import json
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
 from enum import Enum
-from config import get_logger
+from config import get_logger, PREFETCH_QUEUE_SIZE
 from database import Database
 from schemas import (
     MasteryState, SyllabusOutput, QuestionOutput, GradingOutput,
@@ -28,8 +28,6 @@ from agents.mastery_scorer import run_mastery_scorer
 from agents.study_strategy import run_study_strategy
 
 logger = get_logger("Orchestrator")
-
-PREFETCH_QUEUE_SIZE = 2
 
 
 class Event(str, Enum):
@@ -252,12 +250,6 @@ class Orchestrator:
                 logger.info(f"Pre-gen: will be SRS review for '{srs_concept}'")
             mastery.next_is_review = False
 
-        # Update difficulty tracking
-        if hasattr(question, 'difficulty'):
-            mastery.recent_difficulties.append(question.difficulty)
-            if len(mastery.recent_difficulties) > 10:
-                mastery.recent_difficulties.pop(0)
-
         # Launch prefetch(es) to maintain queue size
         target_size = PREFETCH_QUEUE_SIZE if not srs_concept else 1
         current_pending = len(self._prefetch_queue)
@@ -336,6 +328,12 @@ class Orchestrator:
                 logger.warning(f"Error retrieving prefetched question: {e}")
 
         return None
+
+    def clear_prefetch_queue(self):
+        """Clear prefetch queue to prevent returning skipped questions."""
+        self._prefetch_queue.clear()
+        self._prefetched_questions.clear()
+        logger.info("Prefetch queue cleared")
 
     def get_srs_stats(self, session_id: str) -> dict:
         """Get SRS statistics for the sidebar display."""

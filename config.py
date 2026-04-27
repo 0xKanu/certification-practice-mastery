@@ -98,3 +98,10 @@ def call_llm_json(system_prompt: str, user_message: str, schema: Type[T], temper
         raise e
         
     return schema(**parsed)
+
+# ── Queue & Cache Settings ─────────────────────────────────────
+
+PREFETCH_QUEUE_SIZE = 2
+RECENT_QUESTIONS_LIMIT = 15
+RECENT_DIFFICULTIES_LIMIT = 10
+QUESTION_CACHE_TTL_DAYS = 7
