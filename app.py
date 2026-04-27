@@ -375,11 +375,15 @@ with left:
                 options=list(options.keys()),
                 format_func=lambda x: f"{x}) {options[x]}",
                 label_visibility="collapsed",
+                index=None,
             )
 
             col_submit, col_skip = st.columns([1, 1])
 
             if col_submit.button("Submit answer", type="primary"):
+                if choice is None:
+                    st.toast("Please select an answer first!", icon="⚠️")
+                    st.rerun()
                 logger.info(f"User submitted answer: '{choice}'")
                 try:
                     result = orch.handle_answer_submitted(
