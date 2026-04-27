@@ -52,7 +52,7 @@ class Orchestrator:
         self.db = db
         # Set max_workers=1 to prevent concurrent API connections on free tiers
         # Tasks still run in the background relative to the UI, but execute sequentially.
-        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._executor = ThreadPoolExecutor(max_workers=2)
         self._prefetched_question: Future | None = None
         self._error_future: Future | None = None
 
