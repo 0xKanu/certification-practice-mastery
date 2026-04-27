@@ -332,10 +332,44 @@ with left:
 
         st.markdown(q.question_text)
 
-        # Only show answer interface if NO grading yet (prevents re-answering)
-        if not st.session_state.last_grading:
-            # Answer options
-            options = {opt.label: opt.text for opt in q.options}
+        # Answer options - show differently based on grading state
+        g = st.session_state.last_grading
+        options = {opt.label: opt.text for opt in q.options}
+
+        if g:
+            # Show options with color-coded feedback (read-only display)
+            correct_answer = g.correct_answer
+
+            for opt_label, opt_text in options.items():
+                if opt_label == g.student_answer:
+                    if g.is_correct:
+                        st.success(f"✓ {opt_label}) {opt_text}")
+                    else:
+                        st.error(f"✗ {opt_label}) {opt_text}")
+                elif opt_label == correct_answer:
+                    st.success(f"✓ {opt_label}) {opt_text}")
+                else:
+                    st.markdown(f"{opt_label}) {opt_text}")
+
+            # Continue button (outsidegrading block, for both correct and incorrect)
+            st.divider()
+            if st.button("Continue to next question", type="primary"):
+                prefetched = orch.get_prefetched_question()
+                if prefetched:
+                    st.session_state.current_question = prefetched
+                    st.session_state.question_number += 1
+                    st.session_state.mastery.recent_questions.append(prefetched.question_text)
+                    if len(st.session_state.mastery.recent_questions) > 15:
+                        st.session_state.mastery.recent_questions.pop(0)
+                    st.session_state.last_grading = None
+                    st.session_state.show_explanation = False
+                    st.toast("⚡ Next question ready!", icon="⚡")
+                    st.rerun()
+                else:
+                    st.session_state.stage = AppStage.GENERATING
+                    st.rerun()
+        else:
+            # Fresh question - show radio to answer
             choice = st.radio(
                 "Your answer",
                 options=list(options.keys()),
@@ -347,7 +381,6 @@ with left:
 
             if col_submit.button("Submit answer", type="primary"):
                 logger.info(f"User submitted answer: '{choice}'")
-                # Use orchestrator for parallel grading + pre-generation
                 try:
                     result = orch.handle_answer_submitted(
                         question=q,
@@ -358,7 +391,6 @@ with left:
                     )
                     st.session_state.mastery = result["mastery"]
                     st.session_state.last_grading = result["grading"]
-                    # Don't change stage - keep showing grading while prefetch runs in background
                     st.rerun()
                 except (json.JSONDecodeError, ValidationError) as e:
                     st.error(f"Grading failed due to an AI response error. ({e})")
@@ -367,7 +399,6 @@ with left:
 
             if col_skip.button("Skip"):
                 logger.info("User skipped the question.")
-                # Try to get prefetched question before generating new one
                 prefetched = orch.get_prefetched_question()
                 if prefetched:
                     st.session_state.current_question = prefetched
