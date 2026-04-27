@@ -50,8 +50,8 @@ class Orchestrator:
 
     def __init__(self, db: Database):
         self.db = db
-        # Set max_workers=1 to prevent concurrent API connections on free tiers
-        # Tasks still run in the background relative to the UI, but execute sequentially.
+        # max_workers=2 allows parallel execution (grade + generate next question)
+        # while preventing too many concurrent API calls on free tiers.
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._prefetched_question: Future | None = None
         self._error_future: Future | None = None
@@ -284,6 +284,15 @@ class Orchestrator:
         """Generate a study strategy."""
         logger.info("Event: STRATEGY_REQUESTED")
         return run_study_strategy(mastery, syllabus)
+
+    def get_prefetched_question(self) -> QuestionOutput | None:
+        """Return prefetched question if ready, else None."""
+        if self._prefetched_question and self._prefetched_question.done():
+            q = self._prefetched_question.result()
+            self._prefetched_question = None
+            logger.info("Prefetched question retrieved (instant)")
+            return q
+        return None
 
     def get_srs_stats(self, session_id: str) -> dict:
         """Get SRS statistics for the sidebar display."""

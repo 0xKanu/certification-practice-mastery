@@ -83,14 +83,18 @@ def call_llm_json(system_prompt: str, user_message: str, schema: Type[T], temper
     raw = call_llm(system_prompt, user_message, temperature)
 
     clean = raw.strip()
-    if clean.startswith("```"):
-        # Split by first newline to remove the ```json part
-        parts = clean.split("\n", 1)
-        if len(parts) > 1:
-            clean = parts[1]
-    if clean.endswith("```"):
-        clean = clean.rsplit("```", 1)[0]
-    clean = clean.strip()
-
-    parsed = json.loads(clean)
+    
+    # Extract JSON between the first '{' and the last '}'
+    start_idx = clean.find('{')
+    end_idx = clean.rfind('}')
+    
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        clean = clean[start_idx:end_idx + 1]
+    
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError as e:
+        _logger.error(f"JSON Parse Error. Raw LLM response:\n{raw}")
+        raise e
+        
     return schema(**parsed)

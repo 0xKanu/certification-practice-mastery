@@ -271,7 +271,7 @@ with left:
             st.session_state.stage = AppStage.GENERATING
             st.rerun()
 
-        # Show previous grading result if exists
+        # Show grading feedback
         g = st.session_state.last_grading
         if g:
             # Try to collect error classification from background
@@ -285,6 +285,9 @@ with left:
                     f"❌ Incorrect — the answer was **{g.correct_answer}**. "
                     f"{g.explanation}"
                 )
+                # Explain WHY the answer was wrong
+                if g.error_reasoning:
+                    st.caption(f"💡 Why it's wrong: {g.error_reasoning}")
                 if g.error_category:
                     category_labels = {
                         "conceptual_misunderstanding": "🧠 Conceptual gap",
@@ -299,9 +302,29 @@ with left:
                 if g.concept_gap:
                     st.caption(f"Gap identified: {g.concept_gap}")
 
+            # Continue button to proceed to next question (while prefetch runs in background)
+            st.divider()
+            if st.button("Continue to next question", type="primary"):
+                    # Try to get prefetched question (instant if ready)
+                    prefetched = orch.get_prefetched_question()
+                    if prefetched:
+                        st.session_state.current_question = prefetched
+                        st.session_state.question_number += 1
+                        # Track recent questions
+                        st.session_state.mastery.recent_questions.append(prefetched.question_text)
+                        if len(st.session_state.mastery.recent_questions) > 15:
+                            st.session_state.mastery.recent_questions.pop(0)
+                        st.session_state.last_grading = None
+                        st.session_state.show_explanation = False
+                        st.toast("⚡ Next question ready!", icon="⚡")
+                        st.rerun()
+                    else:
+                        st.session_state.stage = AppStage.GENERATING
+                        st.rerun()
+
         st.divider()
 
-        # Question display
+        # Show question display
         header_cols = st.columns([3, 1, 1])
         header_cols[0].markdown(f"**Question {st.session_state.question_number}**")
         header_cols[1].caption(q.domain)
@@ -309,38 +332,52 @@ with left:
 
         st.markdown(q.question_text)
 
-        # Answer options
-        options = {opt.label: opt.text for opt in q.options}
-        choice = st.radio(
-            "Your answer",
-            options=list(options.keys()),
-            format_func=lambda x: f"{x}) {options[x]}",
-            label_visibility="collapsed",
-        )
+        # Only show answer interface if NO grading yet (prevents re-answering)
+        if not st.session_state.last_grading:
+            # Answer options
+            options = {opt.label: opt.text for opt in q.options}
+            choice = st.radio(
+                "Your answer",
+                options=list(options.keys()),
+                format_func=lambda x: f"{x}) {options[x]}",
+                label_visibility="collapsed",
+            )
 
-        col_submit, col_skip = st.columns([1, 1])
+            col_submit, col_skip = st.columns([1, 1])
 
-        if col_submit.button("Submit answer", type="primary"):
-            logger.info(f"User submitted answer: '{choice}'")
-            # Use orchestrator for parallel grading + pre-generation
-            try:
-                result = orch.handle_answer_submitted(
-                    question=q,
-                    student_answer=choice,
-                    syllabus=st.session_state.syllabus,
-                    mastery=st.session_state.mastery,
-                    question_number=st.session_state.question_number,
-                )
-                st.session_state.mastery = result["mastery"]
-                st.session_state.last_grading = result["grading"]
-                st.session_state.stage = AppStage.GENERATING
-                st.rerun()
-            except (json.JSONDecodeError, ValidationError) as e:
-                st.error(f"Grading failed due to an AI response error. ({e})")
-            except Exception as e:
-                st.error(f"Grading failed: {e}")
+            if col_submit.button("Submit answer", type="primary"):
+                logger.info(f"User submitted answer: '{choice}'")
+                # Use orchestrator for parallel grading + pre-generation
+                try:
+                    result = orch.handle_answer_submitted(
+                        question=q,
+                        student_answer=choice,
+                        syllabus=st.session_state.syllabus,
+                        mastery=st.session_state.mastery,
+                        question_number=st.session_state.question_number,
+                    )
+                    st.session_state.mastery = result["mastery"]
+                    st.session_state.last_grading = result["grading"]
+                    # Don't change stage - keep showing grading while prefetch runs in background
+                    st.rerun()
+                except (json.JSONDecodeError, ValidationError) as e:
+                    st.error(f"Grading failed due to an AI response error. ({e})")
+                except Exception as e:
+                    st.error(f"Grading failed: {e}")
 
-        if col_skip.button("Skip"):
-            logger.info("User skipped the question.")
-            st.session_state.stage = AppStage.GENERATING
-            st.rerun()
+            if col_skip.button("Skip"):
+                logger.info("User skipped the question.")
+                # Try to get prefetched question before generating new one
+                prefetched = orch.get_prefetched_question()
+                if prefetched:
+                    st.session_state.current_question = prefetched
+                    st.session_state.question_number += 1
+                    st.session_state.mastery.recent_questions.append(prefetched.question_text)
+                    if len(st.session_state.mastery.recent_questions) > 15:
+                        st.session_state.mastery.recent_questions.pop(0)
+                    st.session_state.last_grading = None
+                    st.session_state.show_explanation = False
+                    st.rerun()
+                else:
+                    st.session_state.stage = AppStage.GENERATING
+                    st.rerun()
