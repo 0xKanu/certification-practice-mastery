@@ -12,6 +12,7 @@ Key capabilities:
 """
 
 import json
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
 from enum import Enum
 from config import get_logger
@@ -27,6 +28,8 @@ from agents.mastery_scorer import run_mastery_scorer
 from agents.study_strategy import run_study_strategy
 
 logger = get_logger("Orchestrator")
+
+PREFETCH_QUEUE_SIZE = 2
 
 
 class Event(str, Enum):
@@ -53,7 +56,8 @@ class Orchestrator:
         # max_workers=2 allows parallel execution (grade + generate next question)
         # while preventing too many concurrent API calls on free tiers.
         self._executor = ThreadPoolExecutor(max_workers=2)
-        self._prefetched_question: Future | None = None
+        self._prefetch_queue: deque[Future] = deque(maxlen=PREFETCH_QUEUE_SIZE)
+        self._prefetched_questions: deque[QuestionOutput] = deque(maxlen=PREFETCH_QUEUE_SIZE)
         self._error_future: Future | None = None
 
     def shutdown(self):
@@ -139,19 +143,27 @@ class Orchestrator:
         """
         logger.info(f"Event: QUESTION_NEEDED — #{question_number}")
 
-        # Decision 1: is a pre-fetched question ready?
-        if self._prefetched_question is not None:
+        # Decision 1: Check prefetched questions queue first (instant)
+        if self._prefetched_questions:
+            question = self._prefetched_questions.popleft()
+            logger.info("Route: PRE-FETCHED question from queue (instant)")
+            return question
+
+        # Decision 2: Check old single prefetch (backward compat / fallback)
+        if self._prefetch_queue:
             try:
-                if self._prefetched_question.done():
-                    question = self._prefetched_question.result()
-                    self._prefetched_question = None
-                    logger.info("Route: PRE-FETCHED question served (instant)")
-                    return question
+                # Find any completed future
+                for i, future in enumerate(self._prefetch_queue):
+                    if future.done():
+                        question = future.result()
+                        # Remove this future from queue
+                        del self._prefetch_queue[i]
+                        logger.info("Route: PRE-FETCHED question served (instant)")
+                        return question
             except Exception as e:
                 logger.warning(f"Pre-fetched question failed: {e}")
-                self._prefetched_question = None
 
-        # Decision 2: is this an SRS review question?
+        # Decision 3: is this an SRS review question?
         srs_concept = None
         srs_domain = None
         if mastery.next_is_review and mastery.session_id:
@@ -223,13 +235,14 @@ class Orchestrator:
                 grading_json=grading.model_dump_json(),
             )
 
-        # Step 5: Pre-generate next question in background (PARALLEL)
+# Step 5: Pre-generate multiple questions in background (queue-based)
         next_q_number = question_number + 1
 
-        # Determine if next should be SRS review
+        # Check if SRS review is due (prioritize this)
         srs_concept = None
         srs_domain = None
-        if mastery.next_is_review and mastery.session_id:
+        do_srs = mastery.next_is_review and mastery.session_id
+        if do_srs:
             due_cards = self.db.get_due_cards(mastery.session_id)
             if due_cards:
                 card = due_cards[0]
@@ -239,12 +252,28 @@ class Orchestrator:
                 logger.info(f"Pre-gen: will be SRS review for '{srs_concept}'")
             mastery.next_is_review = False
 
-        self._prefetched_question = self._executor.submit(
-            run_question_generator,
-            syllabus, mastery, next_q_number,
-            srs_concept, srs_domain, self.db,
-        )
-        logger.info("Step 5: Next question pre-generation launched in background")
+        # Update difficulty tracking
+        if hasattr(question, 'difficulty'):
+            mastery.recent_difficulties.append(question.difficulty)
+            if len(mastery.recent_difficulties) > 10:
+                mastery.recent_difficulties.pop(0)
+
+        # Launch prefetch(es) to maintain queue size
+        target_size = PREFETCH_QUEUE_SIZE if not srs_concept else 1
+        current_pending = len(self._prefetch_queue)
+
+        for i in range(target_size - current_pending):
+            q_num = next_q_number + i
+            future = self._executor.submit(
+                run_question_generator,
+                syllabus, mastery, q_num,
+                srs_concept if i == 0 else None,
+                srs_domain if i == 0 else None,
+                self.db,
+            )
+            self._prefetch_queue.append(future)
+            mode = "SRS" if srs_concept and i == 0 else "NEW"
+            logger.info(f"Pre-gen {i+1}/{target_size}: question #{q_num} ({mode}) launched in background")
 
         # Track recent questions
         mastery.recent_questions.append(question.question_text)
@@ -287,12 +316,25 @@ class Orchestrator:
         return run_study_strategy(mastery, syllabus)
 
     def get_prefetched_question(self) -> QuestionOutput | None:
-        """Return prefetched question if ready, else None."""
-        if self._prefetched_question and self._prefetched_question.done():
-            q = self._prefetched_question.result()
-            self._prefetched_question = None
-            logger.info("Prefetched question retrieved (instant)")
+        """Return prefetched question from queue if ready, else None."""
+        # First check the prefetched questions queue (instant answer)
+        if self._prefetched_questions:
+            q = self._prefetched_questions.popleft()
+            logger.info("Prefetched question retrieved from queue (instant)")
             return q
+
+        # Then check the futures queue
+        if self._prefetch_queue:
+            try:
+                for i, future in enumerate(self._prefetch_queue):
+                    if future.done():
+                        q = future.result()
+                        del self._prefetch_queue[i]
+                        logger.info("Prefetched question retrieved from future (instant)")
+                        return q
+            except Exception as e:
+                logger.warning(f"Error retrieving prefetched question: {e}")
+
         return None
 
     def get_srs_stats(self, session_id: str) -> dict:

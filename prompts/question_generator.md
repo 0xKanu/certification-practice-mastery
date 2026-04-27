@@ -21,10 +21,22 @@ based on their previous performance with this domain.
 - If this is the first question (question_number = 1), target the
   highest-weighted domain at medium difficulty.
 
-##DIFFICULTY CALIBRATION (check the mastery state's difficulty_trend):
-- If difficulty_trend is "increasing" for the target domain: generate hard
-- If difficulty_trend is "decreasing": generate easy
-- If "stable": generate medium
+##DIFFICULTY CALIBRATION:
+Use the `difficulty` value passed in the context:
+- "easy": recall of a single fact or definition
+- "medium": requires understanding and application
+- "hard": requires analysis and multi-step reasoning
+- "expert": requires deep understanding, Edge cases, troubleshooting
+
+The difficulty is calculated from pass_probability:
+- 0-40% → easy  
+- 40-70% → medium
+- 70-85% → hard
+- 85%+ → expert
+
+Also consider the current_streak:
+- streak >= 5 → bump up one level (unless already expert)
+- streak >= 3 → maintain difficulty
 
 ##Difficulty levels:
 - Easy: recall of a single fact or definition

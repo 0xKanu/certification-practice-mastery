@@ -19,6 +19,18 @@ def _make_cache_key(domain: str, subtopic: str, difficulty: str, session_id: str
     return f"{domain}_{subtopic}_{difficulty}_{session_prefix}"
 
 
+def _calculate_difficulty(pass_probability: int, streak: int) -> str:
+    """Calculate difficulty based on pass probability and streak."""
+    if pass_probability >= 85 or streak >= 5:
+        return "expert"
+    elif pass_probability >= 70 or streak >= 3:
+        return "hard"
+    elif pass_probability >= 40:
+        return "medium"
+    else:
+        return "easy"
+
+
 def run_question_generator(
     syllabus: SyllabusOutput,
     mastery: MasteryState,
@@ -40,10 +52,15 @@ def run_question_generator(
 
     session_id = mastery.session_id if mastery else None
 
+    # Calculate difficulty based on pass probability
+    difficulty = _calculate_difficulty(mastery.pass_probability, mastery.current_streak)
+
     base_context = {
         "syllabus": syllabus.model_dump(),
         "mastery": mastery.model_dump(),
         "question_number": question_number,
+        "difficulty": difficulty,
+        "recent_questions": mastery.recent_questions[-10:] if mastery.recent_questions else [],
     }
 
     # Add SRS review context if this is a review question
@@ -64,10 +81,16 @@ def run_question_generator(
 
     # Try cache first (only for non-SRS review questions)
     if db and not srs_review_concept:
-        # Use the first domain from mastery as the focus domain
-        domain = next(iter(mastery.domain_scores.keys()), "general") if mastery.domain_scores else "general"
+        # Use a weighted domain selection (more weight on weaker domains)
+        if mastery.domain_scores:
+            # Get weakest domain first
+            if mastery.weakest_domain and mastery.weakest_domain in mastery.domain_scores:
+                domain = mastery.weakest_domain
+            else:
+                domain = next(iter(mastery.domain_scores.keys()))
+        else:
+            domain = "general"
         subtopic = "general"
-        difficulty = "medium"
         cache_key = _make_cache_key(domain, subtopic, difficulty, session_id)
         cached = db.get_cached_question(cache_key)
         if cached:
@@ -88,12 +111,12 @@ def run_question_generator(
 
         if review.approved:
             logger.info(f"Question #{question_number} generated and QA approved.")
-            # Cache the question for future reuse
+            # Cache the question for future reuse (only non-SRS)
             if db and not srs_review_concept:
-                domain = question.domain
-                subtopic = question.subtopic if hasattr(question, 'subtopic') and question.subtopic else "general"
-                difficulty = question.difficulty
-                cache_key = _make_cache_key(domain, subtopic, difficulty, session_id)
+                q_domain = question.domain
+                q_subtopic = question.subtopic if hasattr(question, 'subtopic') and question.subtopic else "general"
+                q_difficulty = question.difficulty
+                cache_key = _make_cache_key(q_domain, q_subtopic, q_difficulty, session_id)
                 db.cache_question(cache_key, question.model_dump_json())
                 logger.info(f"Cached question with key: '{cache_key}'")
             return question

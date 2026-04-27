@@ -151,7 +151,7 @@ class TestAnswerSubmission:
             )
 
         # Next question should be pre-generating
-        assert orchestrator._prefetched_question is not None
+        assert len(orchestrator._prefetch_queue) > 0 or len(orchestrator._prefetched_questions) > 0
 
     def test_persists_to_database(self, orchestrator, sample_syllabus, sample_question):
         start = orchestrator.handle_session_start("Test", sample_syllabus)

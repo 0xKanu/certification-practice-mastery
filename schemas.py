@@ -96,6 +96,7 @@ class MasteryState(BaseModel):
     current_streak: int = 0
     weakest_domain: str | None = None
     recent_questions: list[str] = Field(default_factory=list)
+    recent_difficulties: list[str] = Field(default_factory=list)
     session_id: str | None = None
     srs_review_count: int = 0
     next_is_review: bool = False
