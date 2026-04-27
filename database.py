@@ -77,6 +77,12 @@ class Database:
                     created_at    TEXT NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS question_cache (
+                    cache_key     TEXT PRIMARY KEY,
+                    question_json TEXT NOT NULL,
+                    cached_at     TEXT NOT NULL
+                );
             """)
 
     # ── Sessions ──────────────────────────────────────────────
@@ -206,6 +212,54 @@ class Database:
             count = conn.execute("SELECT COUNT(*) FROM syllabus_cache").fetchone()[0]
             conn.execute("DELETE FROM syllabus_cache")
         logger.info(f"Cleared all {count} cached syllabi")
+        return count
+
+    # ── Question Cache ─────────────────────────────────────────
+
+    def cache_question(self, cache_key: str, question_json: str):
+        """Cache a generated question for instant reuse."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO question_cache (cache_key, question_json, cached_at) VALUES (?, ?, ?)",
+                (cache_key, question_json, _now_iso()),
+            )
+        logger.info(f"Cached question: '{cache_key}'")
+
+    def get_cached_question(self, cache_key: str) -> str | None:
+        """Retrieve cached question JSON, or None if not cached."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT question_json FROM question_cache WHERE cache_key = ?", (cache_key,)
+            ).fetchone()
+        if row:
+            logger.info(f"Question cache HIT: '{cache_key}'")
+            return row["question_json"]
+        logger.info(f"Question cache MISS: '{cache_key}'")
+        return None
+
+    def list_cached_questions(self) -> list[dict]:
+        """List all cached questions."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT cache_key, question_json, cached_at FROM question_cache ORDER BY cached_at DESC"
+            ).fetchall()
+        return [
+            {"cache_key": row["cache_key"], "cached_at": row["cached_at"]}
+            for row in rows
+        ]
+
+    def delete_cached_question(self, cache_key: str):
+        """Delete a single cached question."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM question_cache WHERE cache_key = ?", (cache_key,))
+        logger.info(f"Deleted cached question: '{cache_key}'")
+
+    def clear_question_cache(self) -> int:
+        """Clear all cached questions."""
+        with self._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM question_cache").fetchone()[0]
+            conn.execute("DELETE FROM question_cache")
+        logger.info(f"Cleared {count} cached questions")
         return count
 
     # ── SRS Cards ─────────────────────────────────────────────

@@ -171,6 +171,7 @@ class Orchestrator:
             question_number=question_number,
             srs_review_concept=srs_concept,
             srs_review_domain=srs_domain,
+            db=self.db,
         )
         return question
 
@@ -241,7 +242,7 @@ class Orchestrator:
         self._prefetched_question = self._executor.submit(
             run_question_generator,
             syllabus, mastery, next_q_number,
-            srs_concept, srs_domain,
+            srs_concept, srs_domain, self.db,
         )
         logger.info("Step 5: Next question pre-generation launched in background")
 

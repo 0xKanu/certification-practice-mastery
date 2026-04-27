@@ -3,11 +3,20 @@ import logging
 from pathlib import Path
 from config import call_llm_json, get_logger
 from schemas import QuestionOutput, SyllabusOutput, MasteryState
+from database import Database
 from agents.qa_reviewer import run_qa_reviewer
 
 logger = get_logger("Agent.QuestionGenerator")
 
 PROMPT = (Path(__file__).parent.parent / "prompts" / "question_generator.md").read_text()
+
+QUESTION_CACHE_TTL_DAYS = 7
+
+
+def _make_cache_key(domain: str, subtopic: str, difficulty: str, session_id: str | None) -> str:
+    """Create a cache key from domain, subtopic, difficulty, and session prefix."""
+    session_prefix = session_id[:8] if session_id else "new"
+    return f"{domain}_{subtopic}_{difficulty}_{session_prefix}"
 
 
 def run_question_generator(
@@ -16,14 +25,20 @@ def run_question_generator(
     question_number: int,
     srs_review_concept: str | None = None,
     srs_review_domain: str | None = None,
+    db: Database | None = None,
 ) -> QuestionOutput:
     """Agent 2: syllabus + mastery state → one practice question (with QA loop).
 
     If srs_review_concept is provided, generates a question specifically
     targeting that concept for spaced repetition review.
+
+    Uses question caching when db is provided to cache/reuse questions by
+    (domain, subtopic, difficulty, session_id).
     """
     mode = "SRS REVIEW" if srs_review_concept else "NEW"
     logger.info(f"Generating question #{question_number} (mode: {mode})...")
+
+    session_id = mastery.session_id if mastery else None
 
     base_context = {
         "syllabus": syllabus.model_dump(),
@@ -47,6 +62,18 @@ def run_question_generator(
     current_context = json.dumps(base_context, indent=2)
     max_retries = 3
 
+    # Try cache first (only for non-SRS review questions)
+    if db and not srs_review_concept:
+        # Use the first domain from mastery as the focus domain
+        domain = next(iter(mastery.domain_scores.keys()), "general") if mastery.domain_scores else "general"
+        subtopic = "general"
+        difficulty = "medium"
+        cache_key = _make_cache_key(domain, subtopic, difficulty, session_id)
+        cached = db.get_cached_question(cache_key)
+        if cached:
+            logger.info(f"Cache HIT, returning cached question")
+            return QuestionOutput.model_validate_json(cached)
+
     for attempt in range(max_retries):
         # 1. Generate the question
         question = call_llm_json(
@@ -61,6 +88,14 @@ def run_question_generator(
 
         if review.approved:
             logger.info(f"Question #{question_number} generated and QA approved.")
+            # Cache the question for future reuse
+            if db and not srs_review_concept:
+                domain = question.domain
+                subtopic = question.subtopic if hasattr(question, 'subtopic') and question.subtopic else "general"
+                difficulty = question.difficulty
+                cache_key = _make_cache_key(domain, subtopic, difficulty, session_id)
+                db.cache_question(cache_key, question.model_dump_json())
+                logger.info(f"Cached question with key: '{cache_key}'")
             return question
 
         # 3. If rejected, append critique to the prompt context for the next iteration
